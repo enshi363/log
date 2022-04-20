@@ -43,44 +43,49 @@ var logger *Logger
 
 func New(out io.Writer, prefix string, flag int) *Logger {
 	log.SetOutput(out)
+	log.Default().SetFlags(log.LstdFlags | log.Llongfile | log.Lmicroseconds)
 	logger = (*Logger)(log.New(out, prefix, flag))
 	return logger
 }
 
 func NewRemoteSyslog(netType, addr, tag string) *Logger {
-	fd, err := syslog.Dial(netType, addr, syslog.LOG_INFO, tag)
+	fd, err := syslog.Dial(netType, addr, syslog.LOG_DEBUG|syslog.LOG_KERN|syslog.LOG_WARNING|syslog.LOG_CRIT, tag)
 	if err != nil {
-		return New(os.Stdout, "", log.LstdFlags)
+		return New(os.Stdout, "", log.LstdFlags|log.Llongfile|log.Lmicroseconds)
 	}
-	return New(fd, "", log.LstdFlags)
+	return New(fd, "", log.LstdFlags|log.Llongfile|log.Lmicroseconds)
 }
 
 func Debug(message string) {
 	if logger != nil {
 		logger.Debug(message)
 	} else {
-		log.Printf("[Debug]%s", message)
+		// fmt.Fprintf(*writer, "%s [Debug] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
+		log.Printf("[Debug] %s", message)
 	}
 }
 func Info(message string) {
 	if logger != nil {
 		logger.Info(message)
 	} else {
-		log.Printf("[Info]%s", message)
+		// fmt.Fprintf(*writer, "%s [Info] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
+		log.Printf("[Info] %s", message)
 	}
 }
 func Warn(message string) {
 	if logger != nil {
 		logger.Warn(message)
 	} else {
-		log.Printf("[Warn]%s", message)
+		// fmt.Fprintf(*writer, "%s [Warn] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
+		log.Printf("[Warn] %s", message)
 	}
 }
 func Error(message string) {
 	if logger != nil {
 		logger.Error(message)
 	} else {
-		log.Printf("[Error]%s", message)
+		// fmt.Fprintf(*writer, "%s [Error] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
+		log.Printf("[Error] %s", message)
 	}
 }
 
@@ -99,4 +104,5 @@ func (l *Logger) Error(message string) {
 
 func (l *Logger) format(level string, message string) {
 	log.Println("[" + level + "] " + message)
+	// fmt.Fprintf(*writer, "%s ["+level+"] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
 }
