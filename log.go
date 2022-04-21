@@ -1,10 +1,13 @@
 package log
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"log/syslog"
-	"os"
+	"time"
+
+	"github.com/panjf2000/ants/v2"
 )
 
 type Logger log.Logger
@@ -21,25 +24,43 @@ const (
 )
 
 var (
-	Fatal     = log.Fatal
-	Fatalf    = log.Fatalf
-	Fatalln   = log.Fatalln
-	Flags     = log.Flags
-	Output    = log.Output
-	Panic     = log.Panic
-	Panicf    = log.Panicf
-	Panicln   = log.Panicln
-	Prefix    = log.Prefix
-	Print     = log.Print
-	Printf    = log.Printf
-	Println   = log.Println
-	SetFlags  = log.SetFlags
-	SetOutput = log.SetOutput
-	SetPrefix = log.SetPrefix
-	Writer    = log.Writer
+	Fatal                                      = log.Fatal
+	Fatalf                                     = log.Fatalf
+	Fatalln                                    = log.Fatalln
+	Flags                                      = log.Flags
+	Output                                     = log.Output
+	Panic                                      = log.Panic
+	Panicf                                     = log.Panicf
+	Panicln                                    = log.Panicln
+	Prefix                                     = log.Prefix
+	Print                                      = log.Print
+	Printf                                     = log.Printf
+	Println                                    = log.Println
+	SetFlags                                   = log.SetFlags
+	SetOutput                                  = log.SetOutput
+	SetPrefix                                  = log.SetPrefix
+	Writer                                     = log.Writer
+	DefaultPoolSize                            = 102400
+	LevelString     map[syslog.Priority]string = map[syslog.Priority]string{
+		syslog.LOG_ALERT:   "Alert",
+		syslog.LOG_DEBUG:   "Debug",
+		syslog.LOG_NOTICE:  "Notice",
+		syslog.LOG_INFO:    "Info",
+		syslog.LOG_WARNING: "Warn",
+		syslog.LOG_ERR:     "Error",
+		syslog.LOG_CRIT:    "Fatal",
+		syslog.LOG_EMERG:   "Emerg",
+	}
 )
 
+type logMessage struct {
+	Message string
+	Level   syslog.Priority
+}
+
 var logger *Logger
+
+var pool *ants.PoolWithFunc
 
 func New(out io.Writer, prefix string, flag int) *Logger {
 	log.SetOutput(out)
@@ -48,61 +69,87 @@ func New(out io.Writer, prefix string, flag int) *Logger {
 	return logger
 }
 
-func NewRemoteSyslog(netType, addr, tag string) *Logger {
+func NewRemoteSyslog(netType, addr, tag string, asyncsize int) (err error) {
 	fd, err := syslog.Dial(netType, addr, syslog.LOG_DEBUG|syslog.LOG_KERN|syslog.LOG_WARNING|syslog.LOG_CRIT, tag)
 	if err != nil {
-		return New(os.Stdout, "", log.LstdFlags|log.Llongfile|log.Lmicroseconds)
+		return
 	}
-	return New(fd, "", log.LstdFlags|log.Llongfile|log.Lmicroseconds)
+	if asyncsize == 0 {
+		asyncsize = DefaultPoolSize
+	}
+	pool, err = ants.NewPoolWithFunc(asyncsize, func(i interface{}) {
+		payload, ok := i.(*logMessage)
+		if !ok {
+			return
+		}
+		switch payload.Level {
+		case syslog.LOG_DEBUG:
+			fd.Debug(payload.Message)
+		case syslog.LOG_ALERT:
+			if err := fd.Warning(payload.Message); err != nil {
+				fmt.Println("syslog err", err)
+			}
+		case syslog.LOG_INFO:
+			fd.Info(payload.Message)
+		case syslog.LOG_WARNING:
+			if err := fd.Warning(payload.Message); err != nil {
+				fmt.Println("syslog err", err)
+			}
+		case syslog.LOG_ERR:
+			fd.Err(payload.Message)
+		case syslog.LOG_CRIT:
+			fd.Crit(payload.Message)
+		case syslog.LOG_EMERG:
+			fd.Emerg(payload.Message)
+		}
+	}, ants.WithNonblocking(true), ants.WithExpiryDuration(5*time.Second))
+	return
+}
+
+func ReleasePool() {
+	if pool != nil {
+		pool.Release()
+		pool = nil
+	}
 }
 
 func Debug(message string) {
-	if logger != nil {
-		logger.Debug(message)
-	} else {
-		// fmt.Fprintf(*writer, "%s [Debug] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
-		log.Printf("[Debug] %s", message)
-	}
+	format(syslog.LOG_DEBUG, message)
 }
 func Info(message string) {
-	if logger != nil {
-		logger.Info(message)
-	} else {
-		// fmt.Fprintf(*writer, "%s [Info] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
-		log.Printf("[Info] %s", message)
-	}
+	format(syslog.LOG_INFO, message)
 }
 func Warn(message string) {
-	if logger != nil {
-		logger.Warn(message)
-	} else {
-		// fmt.Fprintf(*writer, "%s [Warn] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
-		log.Printf("[Warn] %s", message)
-	}
+	format(syslog.LOG_WARNING, message)
 }
 func Error(message string) {
-	if logger != nil {
-		logger.Error(message)
-	} else {
-		// fmt.Fprintf(*writer, "%s [Error] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
-		log.Printf("[Error] %s", message)
-	}
+	format(syslog.LOG_ERR, message)
 }
 
 func (l *Logger) Debug(message string) {
-	l.format("Debug", message)
+	format(syslog.LOG_DEBUG, message)
 }
 func (l *Logger) Info(message string) {
-	l.format("Info", message)
+	format(syslog.LOG_INFO, message)
 }
 func (l *Logger) Warn(message string) {
-	l.format("Warn", message)
+	format(syslog.LOG_WARNING, message)
 }
 func (l *Logger) Error(message string) {
-	l.format("Error", message)
 }
 
-func (l *Logger) format(level string, message string) {
-	log.Println("[" + level + "] " + message)
+func format(level syslog.Priority, message string) {
+	if pool != nil {
+		if err := pool.Invoke(&logMessage{
+			Message: message,
+			Level:   level,
+		}); err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		log.Println("[" + LevelString[level] + "] " + message)
+	}
+	//log.Println("[" + level + "] " + message)
+
 	// fmt.Fprintf(*writer, "%s ["+level+"] %s", time.Now().Local().Format("2006-01-02T15:04:05.999Z"), message)
 }
